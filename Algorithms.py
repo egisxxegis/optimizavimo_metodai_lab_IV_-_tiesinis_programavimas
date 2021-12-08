@@ -1,372 +1,189 @@
 import copy
-
-from Point import Point
-from ExecutionSummary import ExecutionSummary
 import numpy as np
-from R import R
 
 
-def dividing_into_halves(left_coord, right_coord, process_function, length_boundary):
-    left = Point(process_function, left_coord, record_calls=False)
-    right = Point(process_function, right_coord, record_calls=False)
-
-    # check user error
-    if left.coord > right.coord:
-        temp = left.coord
-        left.coord = right.coord
-        right.coord = temp
-
-    center = Point(process_function, record_calls=True)
-    x_left = Point(process_function, record_calls=False)
-    x_right = Point(process_function, record_calls=False)
-
-    center.coord = (left.coord + right.coord) / 2
-    center.calculate()
-    length = right.coord - left.coord
-    step_count = 0
-
-    interval_history = []
-    while length >= length_boundary:
-        x_left.coord = left.coord + length/4
-        x_right.coord = right.coord - length/4
-        x_left.calculate()
-        x_right.calculate()
-        if x_left.value < center.value:
-            right.set_as(center)
-            center.set_as(x_left)
-        elif x_right.value < center.value:
-            left.set_as(center)
-            center.set_as(x_right)
-        else:
-            left.set_as(x_left)
-            right.set_as(x_right)
-        length = right.coord - left.coord
-        interval_history.append([left.coord, right.coord])
-        step_count += 1
-        # jump back to while
-
-    return ExecutionSummary(center.coord, center.value, step_count, 'Intervalo pusiau dalijimas', interval_history).\
-        collect_data_from_points(left, right, center, x_left, x_right)
+def init_matrix(x: [[float]]):
+    if len(x) < 1:
+        x = [[0, 3, -2, -6, 0,	0, 0, 0],
+             [12, 4, 2, 0, 1, 1, 0, 0],
+             [8, -2, 2, 1, -1, 0, 1, 0],
+             [5, 0, 0, 1, 2, 0, 0, 1]]
+    return np.array(x, dtype='float64')
 
 
-def goldy_cutting(left_coord, right_coord, process_function, length_boundary, step_limit=9999999999):
-    left = Point(process_function, left_coord, record_calls=False)
-    right = Point(process_function, right_coord, record_calls=False)
-    constant = (-1 + 5**0.5)/2
+def matrix_line_sum_to_destination(matrix: np.ndarray, line_number_from_top_source: int, origin_multiplier: float,
+                                   line_number_from_top_destination: int):
+    if not isinstance(matrix, np.ndarray):
+        raise TypeError("Duota matrix nebuvo numpy.ndarray tipo")
 
-    # check user error
-    if left.coord > right.coord:
-        temp = left.coord
-        left.coord = right.coord
-        right.coord = temp
-
-    length = right.coord - left.coord
-    x_left = Point(process_function, right.coord - constant * length, record_calls=True)
-    x_right = Point(process_function, left.coord + constant * length, record_calls=False)
-
-    interval_history = []
-    step_count = 0
-    while length >= length_boundary and step_count < step_limit:
-        x_left.calculate()
-        x_right.calculate()
-
-        if x_right.value < x_left.value:
-            left.set_as(x_left)
-            length = right.coord - left.coord
-            x_left.set_as(x_right)
-            x_right.coord = left.coord + constant * length
-        else:
-            right.set_as(x_right)
-            length = right.coord - left.coord
-            x_right.set_as(x_left)
-            x_left.coord = right.coord - constant * length
-        step_count += 1
-        interval_history.append([left.coord, right.coord])
-        # while
-
-    return ExecutionSummary(x_left.coord, x_left.value, step_count, 'Auksinis pjūvis', interval_history).\
-        collect_data_from_points(left, right, x_left, x_right)
+    source = matrix[line_number_from_top_source]
+    destination = matrix[line_number_from_top_destination]
+    matrix[line_number_from_top_destination] = source * origin_multiplier + destination
+    return matrix
 
 
-def newton(process_function, process_function_derivative, process_function_derivative2, x0, step_length_boundary):
-    xi = Point(process_function_derivative, x0, record_calls=True)
-    xi1 = Point(process_function_derivative, xi.coord, record_calls=True)
-    steps = 0
-    calls_derivative2 = 0
-    xi.calculate()
-    length = abs(xi.value)
-    while length > step_length_boundary:
-        xi1.coord = xi.coord - (xi.value / process_function_derivative2(xi.coord))
-        calls_derivative2 += 1
-        steps += 1
-        xi1.calculate()
-        xi.set_as(xi1)
-        length = abs(xi.value)
+def matrix_line_multiplication(matrix: np.ndarray, line_number_from_top: int, multiplier: float):
+    if not isinstance(matrix, np.ndarray):
+        raise TypeError("Duota matrix nebuvo numpy.ndarray tipo")
 
-    done = True if process_function_derivative2(xi.coord) > 0 else False
-
-    summary = ExecutionSummary(xi.coord,
-                               process_function(xi.coord),
-                               steps,
-                               name="Newton").collect_data_from_points(xi, xi1)
-    summary.dfx_times = summary.fx_times
-    summary.fx_times = 1
-    summary.ddfx_times = calls_derivative2
-    summary.done = done
-    return summary
+    matrix[line_number_from_top] = matrix[line_number_from_top] * multiplier
+    return matrix
 
 
-def gradient_descend(process_function, process_function_gradient, x0, gradient_norm_epsilon, gamma_step):
-    x = copy.deepcopy(x0)
-    if isinstance(x, list):
-        x = np.array(x)
-    if not isinstance(x, np.ndarray):
-        raise TypeError("Duotas x0 nebuvo list arba numpy.ndarray tipo")
+def extract_col(matrix: np.ndarray, col_num, ignore_line_count=0):
+    if not isinstance(matrix, np.ndarray):
+        raise TypeError("Duota matrix nebuvo numpy.ndarray tipo")
 
-    summary = ExecutionSummary(name="Gradientinis nusileidimas")
-    summary.gamma_x_value_history.append((0, copy.deepcopy(x), None))
-    while True:
-        summary.steps += 1
-        si = process_function_gradient(x)  # n df calls
-        summary.dfx_times += len(x)
-        x_next = x - gamma_step * si
-        x = x_next.copy()
-        summary.gamma_x_value_history.append((gamma_step, copy.deepcopy(x), None))
-        if np.linalg.norm(si, ord=None) < gradient_norm_epsilon:
-            # finished
-            break
-        continue
-    summary.solution = x
-    summary.value = process_function(*x)
-    summary.fx_times += 1
-    return summary
+    return matrix[ignore_line_count:, col_num]
 
 
-def the_fastest_descend(process_function, process_function_gradient, x0, gradient_norm_epsilon,
-                        gamma_search_length_boundary=None, gamma_search_right_coord=None,
-                        gamma_search_step_limit=111):
-    x = copy.deepcopy(x0)
-    if isinstance(x, list):
-        x = np.array(x)
-    if not isinstance(x, np.ndarray):
-        raise TypeError("Duotas x0 nebuvo list arba numpy.ndarray tipo")
-
-    gamma_boundary_given = False if gamma_search_length_boundary is None else True
-    gamma_coord_given = False if gamma_search_right_coord is None else True
-
-    gamma_search_length_boundary = gamma_search_length_boundary if gamma_boundary_given else 1e-5
-    # gamma right coord is changed throughout iterations if not given
-
-    summary = ExecutionSummary(name="Greičiausias nusileidimas")
-    summary.gamma_x_value_history.append((0, copy.deepcopy(x), None))
-    while True:
-        summary.steps += 1
-        si = process_function_gradient(x)
-        summary.dfx_times += len(x)
-
-        def func_with_step(gamma):
-            return process_function(*(x - gamma * si))
-
-        # with right_boundary = 10 or = 2 we would jump too far
-        the_length_boundary = gamma_search_length_boundary
-        gamma_search_right_coord = gamma_search_right_coord if gamma_coord_given else summary.steps
-        gamma_search_left_coord = -the_length_boundary/6
-        # enable answer near zero (look at left coord)
-        goldy_summary = goldy_cutting(left_coord=gamma_search_left_coord,
-                                      right_coord=gamma_search_right_coord,
-                                      process_function=func_with_step,
-                                      length_boundary=the_length_boundary,
-                                      step_limit=gamma_search_step_limit)
-        gamma_step = goldy_summary.solution
-        # if gamma_step < 0:
-        #     raise ValueError(f"gamma_step below zero!\n"
-        #                      f"gamma_step = {gamma_step}\n"
-        #                      f"that is {gamma_step / gamma_search_left_coord}% of left coord\n"
-        #                      f"that is {gamma_search_left_coord - gamma_step} difference in between them\n"
-        #                      f"if that is the x_left, then left coord should be here: "
-        #                      f"{gamma_step * (2-(1+5**0.5)/2) * gamma_search_length_boundary}\n"
-        #                      f"and the given left coord was: {gamma_search_left_coord}\n")
-
-        x = x - gamma_step * si
-
-        summary.fx_times += goldy_summary.fx_times
-        summary.gamma_x_value_history.append((gamma_step, copy.deepcopy(x), None))
-
-        if np.linalg.norm(si, ord=None) < gradient_norm_epsilon:
-            break
-        continue
-
-    summary.solution = x
-    summary.value = process_function(*x)
-    summary.fx_times += 1
-    return summary
+def cols_to_matrix(*args):
+    return np.stack(args, axis=1)
 
 
-def deformed_simplex(process_function, x0, start_length, stop_length,
-                     extend_coef=2, normal_contract_coef=0.5, big_contract_coef=-0.5, step_limit=11111):
-    # form a simplex figure
-    x = copy.deepcopy(x0)
-    if isinstance(x, list):
-        x = np.array(x)
-    if not isinstance(x, np.ndarray):
-        raise TypeError("Duotas x0 nebuvo list arba numpy.ndarray tipo")
+def find_bases_ind(matrix: np.ndarray, count_of_top_rows_to_be_ignored=1, cols0=None):
 
-    n = len(x0)  # number of axis (x, y) = 2
-    vertices_c = n + 1  # number of vertices: triangle for 2 axis
-    x_high_i = 0
-    x_g_i = 0
-    x_low_i = 0
+    cols_ind = [x for x in range(1, len(matrix)+1 - count_of_top_rows_to_be_ignored)] if cols0 is None else cols0
 
-    vertices = [np.zeros(n) for i in range(vertices_c)]
-    values = [i for i in range(vertices_c)]
-    needs_recalculate = np.zeros(vertices_c) == 0
+    def current_det():
+        copied = copy.deepcopy(cols_ind)
+        copied.sort()
+        cols = [extract_col(matrix, x, count_of_top_rows_to_be_ignored) for x in copied]
+        return np.linalg.det(cols_to_matrix(*cols))
 
-    def _get_xcenter(regarding_vertice_i):
-        the_center = np.zeros(n)
-        for i in range(vertices_c):
-            if i == regarding_vertice_i:
+    if current_det() >= 0:
+        return cols_ind
+
+    ind_max = len(matrix[0]) - 1
+    for lead_i in range(0, ind_max + 1 - len(cols_ind)):
+        for i in range(1, len(cols_ind)):   # for each not first index of indexes
+            start = cols_ind[i]
+            for ii in range(start, ind_max+1):   # try each following index
+                if cols_ind.count(ii) > 0:
+                    continue
+                cols_ind[i] = ii
+                if current_det() >= 0:
+                    return cols_ind.sort()
+            cols_ind[i] = start
+        cols_ind[0] = cols_ind[-1] + 1
+        if current_det() >= 0:
+            return cols_ind.sort()
+        cols_ind.sort()
+        # continue search
+    # after for loop
+    raise TypeError("Duota matrix neturi bazės")
+
+
+def find_base_row(matrix: np.ndarray, col_ind, count_of_top_rows_to_be_ignored=1):
+    col = extract_col(matrix, col_ind, count_of_top_rows_to_be_ignored)
+    for i in range(len(col)):
+        if col[i] == 1:
+            return i + count_of_top_rows_to_be_ignored
+    return None
+
+
+class Base:
+    def __init__(self, col, row):
+        self.col = col
+        self.row = row
+
+
+def solve_linear(matrix0: [[float]], ignore_the_top_lines_count=1):
+    ignore_top = ignore_the_top_lines_count
+    matrix = init_matrix(copy.deepcopy(matrix0))
+    temp_bases = find_bases_ind(matrix, count_of_top_rows_to_be_ignored=ignore_top,
+                                cols0=[-3 + x for x in range(len(matrix) - 1)])  # [-3-2-1]
+    bases = [Base(x, find_base_row(matrix, x, ignore_top)) for x in temp_bases]
+    for base in bases:
+        translated_col = base.col if base.col > -1 else len(matrix[0]) + base.col
+        base.col = translated_col
+
+    print("Turime tokią matricą")
+    print(matrix)
+
+    def find_lowest_negative_top_ind(start_ind=1):
+        the_min = matrix[0][start_ind]
+        the_ind = start_ind
+        for i in range(start_ind, len(matrix[0])):
+            if matrix[0][i] < the_min:
+                the_ind = i
+                the_min = matrix[0][i]
+        return the_ind if the_min < 0 else None
+
+    def calc_lambdas_for_change(col_ind, ignore_top_lines=ignore_top):
+        left_values = extract_col(matrix, 0, ignore_top_lines)
+        right_values = extract_col(matrix, col_ind, ignore_top_lines)
+        right_values_mask = right_values > 0
+        right_values = right_values * right_values_mask
+        right_values[right_values == 0] = 1e-12
+        left_values = left_values / right_values
+        left_values[left_values == 0] = np.Infinity
+        return left_values
+
+    def pick_lowest_ind(col_matrix, ignore_top_lines_from_earlier=ignore_top):
+        the_min = col_matrix[0]
+        the_ind = 0
+        for i in range(len(col_matrix)):
+            if col_matrix[i] < the_min:
+                the_min = col_matrix[i]
+                the_ind = i
+        return the_ind + ignore_top_lines_from_earlier
+
+    def transfer_into_base(col_ind, row_ind):
+        the_new_base = Base(col_ind, row_ind)
+        for i in range(len(bases)):
+            if (bases[i]).row == the_new_base.row:
+                bases[i] = the_new_base
+                return the_new_base
+        return None
+
+    def recalculate_matrix_by_new_base(_base: Base):
+        # normalise row
+        base_value = matrix[_base.row][_base.col]
+        multiplier = 1 / base_value
+        if multiplier != 1:
+            print(f"Dauginame eilutę {_base.row+1} (nuo apačios eilutę {len(matrix)-_base.row}) "
+                  f"iš {multiplier}; kitaip:")
+            print(f"Eilutė{_base.row + 1} = Eilutė{_base.row + 1} * {multiplier}\n")
+            matrix_line_multiplication(matrix, _base.row, multiplier)
+            base_value = matrix[_base.row][_base.col]
+            print("Gauname:")
+            print(matrix)
+
+        # zeroing other rows
+        for i in range(len(matrix)):
+            if i == _base.row:
                 continue
-            the_center += vertices[i]
-        return the_center / n
+            if matrix[i][_base.col] == 0:
+                continue
+            multiplier = matrix[i][_base.col] / base_value * -1
+            print(f"Padauginsime eilutę {_base.row + 1} (nuo apačios eilutę {len(matrix) - _base.row}) "
+                  f"iš {multiplier} ir"
+                  f" pridedame prie eilutės {i+1}; kitaip:")
+            print(f"Eilutė{i+1} = Eilutė{i+1} + Eilutė{_base.row + 1} * {multiplier}\n")
+            matrix_line_sum_to_destination(matrix, _base.row, multiplier, i)
+            print("Gauname:")
+            print(matrix)
 
-    # locate vertices
-    delta1 = ((n + 1) ** 0.5 + n - 1) / (n * 2 ** 0.5) * start_length
-    delta2 = ((n + 1) ** 0.5 - 1) / (n * 2 ** 0.5) * start_length
-    for vertice_i in range(n):
-        for axis_i in range(n):
-            delta = delta1 if vertice_i != axis_i else delta2
-            vertices[vertice_i+1][axis_i] = x[axis_i] + delta
-    vertices[0] = x  # x0 is also a vertice
-
-    def _calculate_values():
-        for i in range(vertices_c):
-            if needs_recalculate[i]:
-                values[i] = process_function(*(vertices[i]))
-                needs_recalculate[i] = False
-
-    def _get_high_low_g():
-        # at first the_max/g/min will hold values
-        # then we will switch their values to indexes
-
-        sorted_values = values.copy()
-        sorted_values.sort()
-        the_min = sorted_values[0]
-        the_max = sorted_values[vertices_c-1]
-        the_2nd_high = sorted_values[vertices_c-2]
-
-        unfilled = [True, True, True]
-        for i in range(vertices_c):
-            if unfilled[0] and values[i] == the_max:
-                the_max = i
-                unfilled[0] = False
-            elif unfilled[1] and values[i] == the_2nd_high:
-                the_2nd_high = i
-                unfilled[1] = False
-            elif unfilled[2] and values[i] == the_min:
-                the_min = i
-                unfilled[2] = False
-
-        if the_max == the_2nd_high or the_min == the_max:
-
-            raise NotImplementedError(f"xh, xg, xl had a collision.\n"
-                                      f"all_vertices =\n"
-                                      f"{[(vertices[i], values[i]) for i in range(len(vertices))]}\n"
-                                      f"the_max = {the_max}\n"
-                                      f"the_2nd_high = {the_2nd_high}\n"
-                                      f"the_min = {the_min}")
-        return the_max, the_2nd_high, the_min
-
-    def _get_x_new(the_x_center):
-        x_high = vertices[x_high_i]
-        x_direction_to_center = the_x_center - x_high
-        x_temp = x_high + x_direction_to_center * 2
-        x_temp_value = process_function(*x_temp)
-
-        # extend, reduce, negative reduce
-        multiplier = 1
-        if values[x_low_i] < x_temp_value < values[x_g_i]:
-            multiplier = 1
-        elif x_temp_value < values[x_low_i]:
-            multiplier = extend_coef
-        elif x_temp_value > values[x_high_i]:
-            multiplier = big_contract_coef
-        elif values[x_g_i] < x_temp_value < values[x_high_i]:
-            multiplier = normal_contract_coef
-        multiplier += 1
-
-        x_new = x_high + multiplier * x_direction_to_center
-        value = x_temp_value if multiplier == 2 else process_function(*x_new)
-
-        # if multiplier == 1, calls = 1 ; else calls = 2
-        return x_new, value, 2 if multiplier == 2 else 1
-
-    summary = ExecutionSummary(name="Nelder-Mead")
-
-    # let us iterate
-    _calculate_values()
-    x_high_i, x_g_i, x_low_i = _get_high_low_g()
-
-    for i in range(vertices_c):
-        summary.gamma_x_value_history.append((None, vertices[i], values[i]))
-    summary.fx_times += vertices_c
-
+    # main
+    iteration = 0
     while True:
-        summary.steps += 1
-
-        summary.simplex_high_history_indexes.append(x_high_i)  # last simplex will not be documented
-        x_center = _get_xcenter(x_high_i)
-        vertices[x_high_i], values[x_high_i], temp_fx_calls = _get_x_new(x_center)
-
-        summary.gamma_x_value_history.append((None, copy.deepcopy(vertices[x_high_i]), values[x_high_i]))
-        summary.fx_times += temp_fx_calls
-
-        x_high_i, x_g_i, x_low_i = _get_high_low_g()
-        if np.linalg.norm(vertices[x_high_i] - vertices[x_low_i], ord=None) < stop_length \
-                or summary.steps >= step_limit:
-            break
-
-    summary.solution = vertices[x_low_i]
-    summary.value = values[x_low_i]
-    return summary
-
-
-def nonlinear_solve(point: [float, float, float], writeable_r: R, penalty_f, grad_penalty, proc_f, epsilon=1e-4):
-    start_r = writeable_r.value
-    summary = ExecutionSummary()
-    summary.solution = point
-    old_summary = ExecutionSummary()
-    use_simplex = True if np.linalg.norm(grad_penalty(point), ord=None) < epsilon else False
-    used_method = 'simplex' if use_simplex else 'the fastest descend'
-    print(f"\n\n----\nstarting at {summary.solution} with {used_method}")
-
-    def local_solve_at(start_point):
-        if use_simplex:
-            return deformed_simplex(penalty_f, start_point, 0.01, epsilon)
-        else:
-            return the_fastest_descend(penalty_f, grad_penalty, start_point, epsilon)
-
-    neighbor_solutions = [0, epsilon*8, epsilon*4]
-    while True:
-        old_summary.r_iterations += 1
-        summary = local_solve_at(summary.solution)
-        print(f'with r = {writeable_r.value}, the sol: {summary.solution} of B(X) value {summary.value}')
-        old_summary.steps += summary.steps
-        old_summary.fx_times += summary.fx_times
-        old_summary.dfx_times += summary.dfx_times
-        old_summary.ddfx_times += summary.ddfx_times
-        old_summary.solution = summary.solution
-        old_summary.value = summary.value
-        neighbor_solutions.pop(0)
-        neighbor_solutions.append(old_summary.value)
-        if abs(neighbor_solutions[2] - neighbor_solutions[0]) < epsilon and \
-                abs(neighbor_solutions[2] - neighbor_solutions[1]) < epsilon:
-            break
-        writeable_r.value *= writeable_r.multiplier
-
-    old_summary.translated = point
-    old_summary.r_start = start_r
-    old_summary.r_end = writeable_r.value
-    old_summary.translated_fx = proc_f(*old_summary.solution) *-1
-    old_summary.name = used_method
-    writeable_r.value = start_r
-    return old_summary
+        iteration += 1
+        new_base_ind = find_lowest_negative_top_ind(1)
+        if new_base_ind is None:
+            values = extract_col(matrix, 0, 0)
+            variables = [0] * (len(matrix[0]) - len(matrix))
+            for base in bases:
+                translated_col = base.col if base.col > -1 else len(matrix[0]) + base.col
+                if translated_col - 1 < len(variables):
+                    variables[translated_col-1] = values[base.row]
+            bases.sort(key=lambda x: x.col)
+            print(f"Radome sprendinį X = {variables} su reikšme {values[0] * -1}")
+            print(f"Bazių indeksai: {[x.col for x in bases]}")
+            print("-----------------------------------\n")
+            return
+        lambdas = calc_lambdas_for_change(new_base_ind)
+        new_base_row_ind = pick_lowest_ind(lambdas)
+        new_base = transfer_into_base(new_base_ind, new_base_row_ind)
+        recalculate_matrix_by_new_base(new_base)
+        print(f"--------------Iteracija {iteration} baigta")
